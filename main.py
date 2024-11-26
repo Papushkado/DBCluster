@@ -188,6 +188,114 @@ class CloudInfrastructure:
         
         print("Created EC2 Instances")
         return self.instances
+    
+    def get_mysql_user_data(self, is_manager=False):
+        base_script = '''#!/bin/bash
+# Update system and install required packages
+apt-get update
+apt-get install -y mysql-server mysql-client wget
+
+# Start MySQL
+systemctl start mysql
+systemctl enable mysql
+
+# Secure MySQL installation and set root password
+mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'root_password';"
+mysql -e "FLUSH PRIVILEGES;"
+
+# Configure MySQL to accept connections from any IP
+sed -i 's/bind-address.*=.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf
+'''
+
+        manager_script = '''
+# Create user for replication
+mysql -e "CREATE USER 'repl'@'%' IDENTIFIED BY 'repl_password';"
+mysql -e "GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';"
+mysql -e "FLUSH PRIVILEGES;"
+'''
+
+        end_script = '''
+# Download and install Sakila database
+wget https://downloads.mysql.com/docs/sakila-db.tar.gz
+tar -xvf sakila-db.tar.gz
+mysql -e "SOURCE sakila-db/sakila-schema.sql"
+mysql -e "SOURCE sakila-db/sakila-data.sql"
+mysql -e "USE sakila"
+
+# Restart MySQL to apply changes
+systemctl restart mysql
+'''
+
+        if is_manager:
+            return base_script + manager_script + end_script
+        else:
+            return base_script + end_script
+
+    def create_instances(self):
+        """Create EC2 instances for the cluster"""
+        # Ubuntu 20.04 LTS AMI ID
+        ami_id = 'ami-0261755bbcb8c4a84'  # Update this for your region
+        
+        # Create MySQL instances (3 t2.micro)
+        for i in range(3):
+            is_manager = (i == 0)  # First instance will be the manager
+            instance = self.ec2.run_instances(
+                ImageId=ami_id,
+                InstanceType='t2.micro',
+                MaxCount=1,
+                MinCount=1,
+                SecurityGroupIds=[self.security_groups['mysql']],
+                SubnetId=self.subnet_id,
+                UserData=self.get_mysql_user_data(is_manager),  # Add MySQL setup script
+                TagSpecifications=[{
+                    'ResourceType': 'instance',
+                    'Tags': [{
+                        'Key': 'Name',
+                        'Value': f'MySQL-{"Manager" if is_manager else f"Worker-{i}"}'
+                    }]
+                }]
+            )
+            self.instances[f'mysql_{i}'] = instance['Instances'][0]['InstanceId']
+        
+        # Create Proxy instance (t2.large)
+        proxy_instance = self.ec2.run_instances(
+            ImageId=ami_id,
+            InstanceType='t2.large',
+            MaxCount=1,
+            MinCount=1,
+            SecurityGroupIds=[self.security_groups['proxy']],
+            SubnetId=self.subnet_id,
+            TagSpecifications=[{
+                'ResourceType': 'instance',
+                'Tags': [{
+                    'Key': 'Name',
+                    'Value': 'Proxy'
+                }]
+            }]
+        )
+        self.instances['proxy'] = proxy_instance['Instances'][0]['InstanceId']
+        
+        # Create Gatekeeper and Trusted Host instances (t2.large)
+        for role in ['gatekeeper', 'trusted-host']:
+            instance = self.ec2.run_instances(
+                ImageId=ami_id,
+                InstanceType='t2.large',
+                MaxCount=1,
+                MinCount=1,
+                SecurityGroupIds=[self.security_groups['gatekeeper']],
+                SubnetId=self.subnet_id,
+                TagSpecifications=[{
+                    'ResourceType': 'instance',
+                    'Tags': [{
+                        'Key': 'Name',
+                        'Value': role
+                    }]
+                }]
+            )
+            self.instances[role] = instance['Instances'][0]['InstanceId']
+        
+        print("Created EC2 Instances")
+        return self.instances
 
     def setup_infrastructure(self):
         """Setup complete infrastructure"""
