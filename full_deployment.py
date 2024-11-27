@@ -564,11 +564,14 @@ if __name__ == '__main__':
 EOL
 
 # Configure strict firewall
+ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow from GATEKEEPER_IP to any port 5001 proto tcp
-ufw allow 22/tcp
-ufw enable
+ufw allow from ${GATEKEEPER_IP}/32 to any port 5001 proto tcp comment 'Allow Gatekeeper'
+ufw allow proto tcp from ${PROXY_IP}/32 to any port mysql comment 'Allow Proxy'
+ufw allow from 10.0.0.0/16 to any port 5001 proto tcp comment 'Allow VPC traffic'
+ufw allow 22/tcp comment 'Allow SSH'
+ufw --force enable
 
 # Create service file
 cat > /etc/systemd/system/trusted-host.service << EOL
