@@ -122,6 +122,37 @@ class CloudInfrastructure:
             print(f"Error setting up infrastructure: {e}")
             return False
 
+    def verify_services(self):
+        """Verify that all services are running correctly"""
+    
+        def check_service(instance_id, service_name, port):
+            try:
+                response = self.ec2.describe_instances(InstanceIds=[instance_id])
+                ip = response['Reservations'][0]['Instances'][0]['PublicIpAddress']
+            
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                result = sock.connect_ex((ip, port))
+                sock.close()
+            
+                if result == 0:
+                    print(f"{service_name} is running on port {port}")
+                    return True
+                else:
+                    print(f"Warning: {service_name} is not responding on port {port}")
+                    return False
+            except Exception as e:
+                print(f"Error checking {service_name}: {e}")
+                return False
+
+        # Check all services
+        services_ok = True
+        services_ok &= check_service(self.instances['gatekeeper'], 'Gatekeeper', 5000)
+        services_ok &= check_service(self.instances['mysql_0'], 'MySQL Manager', 3306)
+    
+        if not services_ok:
+            print("\nWarning: Some services are not responding. You may need to wait a few more minutes.")
+
     def create_security_groups(self):
         """Create security groups for different components"""
         # MySQL Cluster Security Group
