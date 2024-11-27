@@ -1,6 +1,8 @@
 import boto3
+import paramiko
 import time
 from botocore.exceptions import ClientError
+import os
 
 class CloudInfrastructure:
     def __init__(self, region="us-east-1"):
@@ -10,6 +12,27 @@ class CloudInfrastructure:
         self.subnet_id = None
         self.security_groups = {}
         self.instances = {}
+        self.key_name = 'mysql-cluster-key'
+        self.key_path = 'mysql-cluster-key.pem'
+
+    def create_key_pair(self):
+        """Create key pair for SSH access"""
+        try:
+            # Create key pair
+            key_pair = self.ec2.create_key_pair(KeyName=self.key_name)
+            
+            # Save private key to file
+            with open(self.key_path, 'w') as key_file:
+                key_file.write(key_pair['KeyMaterial'])
+            
+            # Set correct permissions for key file
+            os.chmod(self.key_path, 0o400)
+            
+            print(f"Created key pair and saved to {self.key_path}")
+            return True
+        except Exception as e:
+            print(f"Error creating key pair: {e}")
+            return False
 
     def create_vpc(self):
         """Create VPC with CIDR 10.0.0.0/16"""
@@ -83,6 +106,12 @@ class CloudInfrastructure:
                     'FromPort': 3306,
                     'ToPort': 3306,
                     'IpRanges': [{'CidrIp': '10.0.0.0/16'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 22,
+                    'ToPort': 22,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
                 }
             ]
         )
@@ -125,71 +154,8 @@ class CloudInfrastructure:
         print("Created Security Groups")
         return self.security_groups
 
-    def create_instances(self):
-        """Create EC2 instances for the cluster"""
-        # Ubuntu 20.04 LTS AMI ID (replace with the correct AMI ID for your region)
-        ami_id = 'ami-0261755bbcb8c4a84'  # Update this for your region
-        
-        # Create MySQL instances (3 t2.micro)
-        for i in range(3):
-            instance = self.ec2.run_instances(
-                ImageId=ami_id,
-                InstanceType='t2.micro',
-                MaxCount=1,
-                MinCount=1,
-                SecurityGroupIds=[self.security_groups['mysql']],
-                SubnetId=self.subnet_id,
-                TagSpecifications=[{
-                    'ResourceType': 'instance',
-                    'Tags': [{
-                        'Key': 'Name',
-                        'Value': f'MySQL-Node-{i}'
-                    }]
-                }]
-            )
-            self.instances[f'mysql_{i}'] = instance['Instances'][0]['InstanceId']
-        
-        # Create Proxy instance (t2.large)
-        proxy_instance = self.ec2.run_instances(
-            ImageId=ami_id,
-            InstanceType='t2.large',
-            MaxCount=1,
-            MinCount=1,
-            SecurityGroupIds=[self.security_groups['proxy']],
-            SubnetId=self.subnet_id,
-            TagSpecifications=[{
-                'ResourceType': 'instance',
-                'Tags': [{
-                    'Key': 'Name',
-                    'Value': 'Proxy'
-                }]
-            }]
-        )
-        self.instances['proxy'] = proxy_instance['Instances'][0]['InstanceId']
-        
-        # Create Gatekeeper and Trusted Host instances (t2.large)
-        for role in ['gatekeeper', 'trusted-host']:
-            instance = self.ec2.run_instances(
-                ImageId=ami_id,
-                InstanceType='t2.large',
-                MaxCount=1,
-                MinCount=1,
-                SecurityGroupIds=[self.security_groups['gatekeeper']],
-                SubnetId=self.subnet_id,
-                TagSpecifications=[{
-                    'ResourceType': 'instance',
-                    'Tags': [{
-                        'Key': 'Name',
-                        'Value': role
-                    }]
-                }]
-            )
-            self.instances[role] = instance['Instances'][0]['InstanceId']
-        
-        print("Created EC2 Instances")
-        return self.instances
-    
     def get_mysql_user_data(self, is_manager=False):
+        """Generate user data script for MySQL setup"""
         base_script = '''#!/bin/bash
 # Update system and install required packages
 apt-get update
@@ -242,11 +208,12 @@ systemctl restart mysql
             instance = self.ec2.run_instances(
                 ImageId=ami_id,
                 InstanceType='t2.micro',
+                KeyName=self.key_name,
                 MaxCount=1,
                 MinCount=1,
                 SecurityGroupIds=[self.security_groups['mysql']],
                 SubnetId=self.subnet_id,
-                UserData=self.get_mysql_user_data(is_manager),  # Add MySQL setup script
+                UserData=self.get_mysql_user_data(is_manager),
                 TagSpecifications=[{
                     'ResourceType': 'instance',
                     'Tags': [{
@@ -261,6 +228,7 @@ systemctl restart mysql
         proxy_instance = self.ec2.run_instances(
             ImageId=ami_id,
             InstanceType='t2.large',
+            KeyName=self.key_name,
             MaxCount=1,
             MinCount=1,
             SecurityGroupIds=[self.security_groups['proxy']],
@@ -280,6 +248,7 @@ systemctl restart mysql
             instance = self.ec2.run_instances(
                 ImageId=ami_id,
                 InstanceType='t2.large',
+                KeyName=self.key_name,
                 MaxCount=1,
                 MinCount=1,
                 SecurityGroupIds=[self.security_groups['gatekeeper']],
@@ -297,16 +266,72 @@ systemctl restart mysql
         print("Created EC2 Instances")
         return self.instances
 
+    def run_sysbench_tests(self):
+        """Run Sysbench tests on MySQL instances"""
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Get MySQL instances
+        mysql_instances = []
+        for i in range(3):
+            response = self.ec2.describe_instances(InstanceIds=[self.instances[f'mysql_{i}']])
+            ip = response['Reservations'][0]['Instances'][0]['PublicIpAddress']
+            mysql_instances.append({
+                'id': self.instances[f'mysql_{i}'],
+                'ip': ip,
+                'name': f'MySQL-{"Manager" if i == 0 else f"Worker-{i}"}'
+            })
+        
+        # Run tests on each instance
+        for instance in mysql_instances:
+            try:
+                print(f"\nTesting {instance['name']} ({instance['ip']})")
+                ssh.connect(instance['ip'], username='ubuntu', key_filename=self.key_path)
+                
+                commands = [
+                    "sudo apt-get update",
+                    "sudo apt-get install -y sysbench",
+                    "mysql -uroot -proot_password -e 'CREATE DATABASE IF NOT EXISTS sbtest;'",
+                    
+                    # Prepare test
+                    "sysbench --db-driver=mysql --mysql-user=root --mysql-password=root_password "
+                    "--mysql-db=sbtest --table-size=10000 --tables=3 /usr/share/sysbench/oltp_read_write.lua prepare",
+                    
+                    # Run test
+                    "sysbench --db-driver=mysql --mysql-user=root --mysql-password=root_password "
+                    "--mysql-db=sbtest --table-size=10000 --tables=3 --threads=6 --time=60 "
+                    "--report-interval=10 /usr/share/sysbench/oltp_read_write.lua run",
+                    
+                    # Cleanup
+                    "sysbench --db-driver=mysql --mysql-user=root --mysql-password=root_password "
+                    "--mysql-db=sbtest --table-size=10000 --tables=3 /usr/share/sysbench/oltp_read_write.lua cleanup"
+                ]
+                
+                for cmd in commands:
+                    print(f"\nExecuting: {cmd}")
+                    stdin, stdout, stderr = ssh.exec_command(cmd)
+                    print(stdout.read().decode())
+                    print(stderr.read().decode())
+                    
+            except Exception as e:
+                print(f"Error testing instance {instance['name']}: {e}")
+            finally:
+                ssh.close()
+
     def setup_infrastructure(self):
         """Setup complete infrastructure"""
         try:
+            self.create_key_pair()
             self.create_vpc()
-            time.sleep(30)  # Wait for VPC to be available
+            time.sleep(30)
             self.create_subnet()
-            time.sleep(30)  # Wait for subnet to be available
+            time.sleep(30)
             self.create_security_groups()
-            time.sleep(30)  # Wait for security groups to be available
+            time.sleep(30)
             self.create_instances()
+            print("\nWaiting for instances to initialize before running Sysbench tests...")
+            time.sleep(300)  # Wait 5 minutes
+            self.run_sysbench_tests()
             return True
         except ClientError as e:
             print(f"Error setting up infrastructure: {e}")
@@ -315,7 +340,7 @@ systemctl restart mysql
 def main():
     infrastructure = CloudInfrastructure()
     if infrastructure.setup_infrastructure():
-        print("Infrastructure setup completed successfully!")
+        print("Infrastructure setup and testing completed successfully!")
     else:
         print("Failed to setup infrastructure")
 
