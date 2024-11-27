@@ -12,8 +12,8 @@ class CloudInfrastructure:
         self.subnet_id = None
         self.security_groups = {}
         self.instances = {}
-        self.key_name = 'mysql-cluster-key-2'
-        self.key_path = 'mysql-cluster-key-2.pem'
+        self.key_name = 'mysql-cluster-key-3'
+        self.key_path = 'mysql-cluster-key-3.pem'
 
     def create_key_pair(self):
         """Create key pair for SSH access with correct permissions"""
@@ -742,23 +742,23 @@ systemctl start trusted-host
 def main():
     infrastructure = CloudInfrastructure()
     if infrastructure.setup_infrastructure():
-        print("Infrastructure setup completed successfully!")
-        print("Your MySQL cluster is now ready to use.")
+        print("\n=== Infrastructure setup completed successfully! ===")
+        print("\nInstance IPs:")
+        for name, ip in infrastructure.instance_ips.items():
+            print(f"{name}: {ip}")
         
-        # Get Gatekeeper's public IP
-        gk_info = infrastructure.ec2.describe_instances(
-            InstanceIds=[infrastructure.instances['gatekeeper']]
-        )
-        gk_public_ip = gk_info['Reservations'][0]['Instances'][0]['PublicIpAddress']
+        gatekeeper_ip = infrastructure.instance_ips['gatekeeper']
+        print(f"\nTesting cluster connection...")
         
-        print("\nTo connect to the cluster, use the Gatekeeper's public IP address:")
-        print(f"Gatekeeper Public IP: {gk_public_ip}")
-        print("\nExample query request:")
-        print(f'''
-        curl -X POST http://{gk_public_ip}:5000/query \\
+        # Afficher la commande avec l'IP réelle, pas la variable
+        print("\nTest the connection with:")
+        print(f"""curl -X POST http://{gatekeeper_ip}:5000/query \\
              -H "Content-Type: application/json" \\
-             -d '{{"query": "SELECT * FROM sakila.actor LIMIT 5;"}}'
-        ''')
+             -d '{{"query": "SELECT COUNT(*) FROM sakila.actor;"}}'""")
+        
+        print("\nMonitor logs on Gatekeeper:")
+        print(f"ssh -i {infrastructure.key_path} ubuntu@{gatekeeper_ip}")
+        print("sudo tail -f /var/log/syslog")
     else:
         print("Failed to setup infrastructure")
 
