@@ -16,24 +16,36 @@ class CloudInfrastructure:
         self.key_path = 'mysql-cluster-key-2.pem'
 
     def create_key_pair(self):
-        """Create key pair for SSH access"""
+        """Create key pair for SSH access with correct permissions"""
         try:
-            # Create key pair
+            # Supprimer la clé existante si elle existe
+            try:
+                os.remove(self.key_path)
+            except OSError:
+                pass
+
+            # Créer la nouvelle paire de clés
             key_pair = self.ec2.create_key_pair(KeyName=self.key_name)
-            
-            # Save private key to file
-            with open(self.key_path, 'w') as key_file:
+        
+            # Sauvegarder dans un répertoire temporaire Linux
+            temp_key_path = os.path.expanduser('~/temp_key.pem')
+            with open(temp_key_path, 'w') as key_file:
                 key_file.write(key_pair['KeyMaterial'])
-            
-            # Set correct permissions for key file
-            os.chmod(self.key_path, 0o400)
-            
-            print(f"Created key pair and saved to {self.key_path}")
+        
+            # Définir les permissions correctes
+            os.chmod(temp_key_path, 0o400)
+        
+            # Copier vers l'emplacement final avec les bonnes permissions
+            import shutil
+            shutil.copy2(temp_key_path, self.key_path)
+            os.remove(temp_key_path)
+        
+            print(f"Created key pair and saved to {self.key_path} with correct permissions")
             return True
         except Exception as e:
             print(f"Error creating key pair: {e}")
             return False
-
+        
     def create_vpc(self):
         """Create VPC with CIDR 10.0.0.0/16"""
         vpc = self.ec2.create_vpc(CidrBlock='10.0.0.0/16')
@@ -529,7 +541,9 @@ systemctl start trusted-host
         """Create EC2 instances for the cluster"""
         ami_id = 'ami-0261755bbcb8c4a84'  # Update this for your region
         instance_ips = {}
-        
+        waiter = self.ec2.get_waiter('instance_running')
+    
+        print("\nCreating MySQL instances...")
         # Create MySQL instances first
         for i in range(3):
             is_manager = (i == 0)
@@ -554,13 +568,15 @@ systemctl start trusted-host
             self.instances[f'mysql_{i}'] = instance_id
 
             # Wait for the instance to get its IP address
-            waiter = self.ec2.get_waiter('instance_running')
+            print(f"Waiting for MySQL {'Manager' if is_manager else f'Worker {i}'} to start...")
             waiter.wait(InstanceIds=[instance_id])
             
             instance_info = self.ec2.describe_instances(InstanceIds=[instance_id])
             instance_ips[f'mysql_{i}'] = instance_info['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+            print(f"MySQL {'Manager' if is_manager else f'Worker {i}'} IP: {instance_ips[f'mysql_{i}']}")
 
         # Create Proxy with MySQL IPs
+        print("\nCreating Proxy instance...")
         proxy_user_data = self.get_proxy_user_data().replace('MANAGER_IP', instance_ips['mysql_0'])\
                                                    .replace('WORKER1_IP', instance_ips['mysql_1'])\
                                                    .replace('WORKER2_IP', instance_ips['mysql_2'])
@@ -584,14 +600,47 @@ systemctl start trusted-host
         )
         proxy_id = proxy_instance['Instances'][0]['InstanceId']
         self.instances['proxy'] = proxy_id
-        
+    
         # Wait for proxy IP
+        print("Waiting for Proxy to start...")
         waiter.wait(InstanceIds=[proxy_id])
         proxy_info = self.ec2.describe_instances(InstanceIds=[proxy_id])
         proxy_ip = proxy_info['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+        print(f"Proxy IP: {proxy_ip}")
 
-        # Create Gatekeeper first
-        gk_user_data = self.get_gatekeeper_user_data()
+        # Create Trusted Host first
+        print("\nCreating Trusted Host instance...")
+        th_user_data = self.get_trusted_host_user_data().replace('PROXY_IP', proxy_ip)
+        th_instance = self.ec2.run_instances(
+            ImageId=ami_id,
+            InstanceType='t2.large',
+            KeyName=self.key_name,
+            MaxCount=1,
+            MinCount=1,
+            SecurityGroupIds=[self.security_groups['gatekeeper']],
+            SubnetId=self.subnet_id,
+            UserData=th_user_data,
+            TagSpecifications=[{
+                'ResourceType': 'instance',
+                'Tags': [{
+                    'Key': 'Name',
+                    'Value': 'trusted-host'
+                }]
+            }]
+        )
+        th_id = th_instance['Instances'][0]['InstanceId']
+        self.instances['trusted-host'] = th_id
+
+        # Wait for trusted host IP
+        print("Waiting for Trusted Host to start...")
+        waiter.wait(InstanceIds=[th_id])
+        th_info = self.ec2.describe_instances(InstanceIds=[th_id])
+        th_private_ip = th_info['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+        print(f"Trusted Host IP: {th_private_ip}")
+
+        # Finally create Gatekeeper with all necessary IPs
+        print("\nCreating Gatekeeper instance...")
+        gk_user_data = self.get_gatekeeper_user_data().replace('TRUSTED_HOST_IP', th_private_ip)
         gk_instance = self.ec2.run_instances(
             ImageId=ami_id,
             InstanceType='t2.large',
@@ -611,56 +660,27 @@ systemctl start trusted-host
         )
         gk_id = gk_instance['Instances'][0]['InstanceId']
         self.instances['gatekeeper'] = gk_id
-        
-        # Wait for gatekeeper IP
+    
+        # Wait for gatekeeper and get its public IP for output
+        print("Waiting for Gatekeeper to start...")
         waiter.wait(InstanceIds=[gk_id])
         gk_info = self.ec2.describe_instances(InstanceIds=[gk_id])
-        gk_ip = gk_info['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+        gk_public_ip = gk_info['Reservations'][0]['Instances'][0]['PublicIpAddress']
+        gk_private_ip = gk_info['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+        print(f"Gatekeeper Public IP: {gk_public_ip}")
+    
+        # Store IPs for reference
+        self.instance_ips = {
+            'mysql_manager': instance_ips['mysql_0'],
+            'mysql_worker1': instance_ips['mysql_1'],
+            'mysql_worker2': instance_ips['mysql_2'],
+            'proxy': proxy_ip,
+            'trusted_host': th_private_ip,
+            'gatekeeper': gk_public_ip
+        }
 
-        # Create Trusted Host with all necessary IPs
-        th_user_data = self.get_trusted_host_user_data().replace('PROXY_IP', proxy_ip)\
-                                                       .replace('GATEKEEPER_IP', gk_ip)
-        
-        th_instance = self.ec2.run_instances(
-            ImageId=ami_id,
-            InstanceType='t2.large',
-            KeyName=self.key_name,
-            MaxCount=1,
-            MinCount=1,
-            SecurityGroupIds=[self.security_groups['gatekeeper']],
-            SubnetId=self.subnet_id,
-            UserData=th_user_data,
-            TagSpecifications=[{
-                'ResourceType': 'instance',
-                'Tags': [{
-                    'Key': 'Name',
-                    'Value': 'trusted-host'
-                }]
-            }]
-        )
-        self.instances['trusted-host'] = th_instance['Instances'][0]['InstanceId']
-
-        print("Created EC2 Instances")
-        return self.instances
-
-    def setup_infrastructure(self):
-        """Setup complete infrastructure"""
-        try:
-            self.create_key_pair()
-            self.create_vpc()
-            time.sleep(30)
-            self.create_subnet()
-            time.sleep(30)
-            self.create_security_groups()
-            time.sleep(30)
-            self.create_instances()
-            print("\nInfrastructure setup completed!")
-            print("\nWaiting for all services to initialize (this may take several minutes)...")
-            time.sleep(300)  # Wait 5 minutes for all services to start
-            return True
-        except ClientError as e:
-            print(f"Error setting up infrastructure: {e}")
-            return False
+        print("\nCreated all EC2 Instances successfully")
+        return self.instances, self.instance_ips
 
 def main():
     infrastructure = CloudInfrastructure()
