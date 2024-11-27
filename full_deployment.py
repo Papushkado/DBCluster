@@ -99,6 +99,29 @@ class CloudInfrastructure:
         print(f"Created Subnet: {self.subnet_id}")
         return self.subnet_id
 
+    def setup_infrastructure(self):
+        """Setup complete infrastructure"""
+        try:
+            print("Starting infrastructure setup...")
+            self.create_key_pair()
+            self.create_vpc()
+            time.sleep(30)  # Wait for VPC to be created
+            self.create_subnet()
+            time.sleep(30)  # Wait for subnet to be created
+            self.create_security_groups()
+            time.sleep(30)  # Wait for security groups to be created
+            self.instances, self.instance_ips = self.create_instances()
+        
+            print("\nWaiting for services to initialize...")
+            time.sleep(300)  # Wait for services to start
+        
+            print("\nVerifying services...")
+            self.verify_services()
+            return True
+        except Exception as e:
+            print(f"Error setting up infrastructure: {e}")
+            return False
+
     def create_security_groups(self):
         """Create security groups for different components"""
         # MySQL Cluster Security Group
