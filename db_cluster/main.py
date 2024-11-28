@@ -7,6 +7,7 @@ from mysql_setup import get_mysql_setup_script
 from proxy_setup import get_proxy_setup_script
 from gatekeeper_setup import get_gatekeeper_setup_script
 from trusted_host_setup import get_trusted_host_setup_script
+from benchmark import run_benchmark
 from config import AWSConfig
 
 def signal_handler(signum, frame):
@@ -23,7 +24,7 @@ def main():
         signal.signal(signal.SIGTERM, signal_handler)
 
         # Create keys directory in user's home directory
-        home_dir = os.path.expanduser("~")
+        home_dir = os.path.expanduser(".")
         keys_dir = os.path.join(home_dir, "aws_keys")
         os.makedirs(keys_dir, exist_ok=True)
         
@@ -42,7 +43,7 @@ def main():
 
         # Create security groups
         print("Creating security groups...")
-        mysql_sg = infra.create_security_group("mysql-sg", "MySQL security group", [
+        mysql_sg = infra.create_security_group("mysql-sg-2", "MySQL security group", [
             {
                 'IpProtocol': 'tcp',
                 'FromPort': 3306,
@@ -54,7 +55,7 @@ def main():
             print("Failed to create MySQL security group")
             return
 
-        proxy_sg = infra.create_security_group("proxy-sg", "Proxy security group", [
+        proxy_sg = infra.create_security_group("proxy-sg-2", "Proxy security group", [
             {
                 'IpProtocol': 'tcp',
                 'FromPort': 5000,
@@ -66,7 +67,7 @@ def main():
             print("Failed to create Proxy security group")
             return
 
-        gatekeeper_sg = infra.create_security_group("gatekeeper-sg", "Gatekeeper security group", [
+        gatekeeper_sg = infra.create_security_group("gatekeeper-sg-2", "Gatekeeper security group", [
             {
                 'IpProtocol': 'tcp',
                 'FromPort': 5000,
@@ -78,7 +79,7 @@ def main():
             print("Failed to create Gatekeeper security group")
             return
 
-        trusted_host_sg = infra.create_security_group("trusted-host-sg", "Trusted host security group", [
+        trusted_host_sg = infra.create_security_group("trusted-host-sg-2", "Trusted host security group", [
             {
                 'IpProtocol': 'tcp',
                 'FromPort': 5000,
@@ -212,10 +213,26 @@ def main():
             f.write(f"MySQL Worker 1 IP: {worker1_ip}\n")
             f.write(f"MySQL Worker 2 IP: {worker2_ip}\n")
             f.write(f"\nSSH Key path: {AWSConfig.key_path}\n")
+        print("\nStarting benchmarks...")
+        benchmark_results = run_benchmark(gatekeeper_ip)
+    
+        print("\nBenchmark Results:")
+        for strategy, results in benchmark_results.items():
+            print(f"\nStrategy: {strategy}")
+            print("Read Operations:")
+            print(f"  Average: {results['read']['avg']:.3f}s")
+            print(f"  Median: {results['read']['median']:.3f}s")
+            print(f"  Min: {results['read']['min']:.3f}s")
+            print(f"  Max: {results['read']['max']:.3f}s")
         
+            print("Write Operations:")
+            print(f"  Average: {results['write']['avg']:.3f}s")
+            print(f"  Median: {results['write']['median']:.3f}s")
+            print(f"  Min: {results['write']['min']:.3f}s")
+            print(f"  Max: {results['write']['max']:.3f}s")
     except Exception as e:
         print(f"Une erreur s'est produite: {str(e)}")
-        infra.cleanup()
+        #infra.cleanup()
         raise
 
 if __name__ == "__main__":
