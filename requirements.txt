@@ -1,0 +1,7 @@
+boto3
+paramiko
+scp
+mysql-connector-python
+flask
+requests
+paramiko
