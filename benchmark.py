@@ -34,12 +34,12 @@ def get_cpu_utilization(instance_id, start_time, end_time):
       Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
       StartTime=start_time - datetime.timedelta(minutes=1),
       EndTime=end_time + datetime.timedelta(minutes=2),
-      Period=20,  # Période de 15 secondes
+      Period=20,  # Période de 20 secondes
       Statistics=['Average']
   )
   return response['Datapoints']
 
-def run_benchmark(gatekeeper_ip, num_requests=100):
+def run_benchmark(gatekeeper_ip, num_requests=1000):
    url = f"http://{gatekeeper_ip}:5000/query"
    
    read_query = "SELECT * FROM actor LIMIT 1;"
@@ -120,7 +120,7 @@ def run_benchmark_with_monitoring(gatekeeper_ip, instances, mode):
     return results
 
 def test_all_modes(gatekeeper_ip, sql_instances):
-   modes = ["DIRECT_HIT", "RANDOM", "CUSTOMIZED"]
+   modes = ["RANDOM","CUSTOMIZED", "DIRECT_HIT"]
    results = {}
    
    for mode in modes:
