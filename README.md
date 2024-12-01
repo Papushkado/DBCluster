@@ -319,7 +319,7 @@ Write requests: {'avg_time': 0.1200225088596344, 'success_rate': 100.0}
 In DIRECT_HIT mode, the manager node shows significantly higher CPU utilization (peaking at 30%) compared to workers (maximum 15%). 
 **This is expected as all requests are routed to the manager node.** The workers show minimal activity, primarily from background processes and data replication.
 
-![alt text](results/cpu_utilization_DIRECT_HIT.png)
+![alt text](result/cpu_utilization_DIRECT_HIT.png)
 
 ### Random Mode 
 
@@ -341,7 +341,7 @@ The RANDOM mode demonstrates **more balanced resource utilization**:
 - Load distribution is more even compared to Direct Hit
 - Clear pattern of distributed read operations
 
-![alt text](results/cpu_utilization_RANDOM.png)
+![alt text](result/cpu_utilization_RANDOM.png)
 
 ### Customized Mode
 
@@ -363,7 +363,7 @@ The CUSTOMIZED mode shows **the most efficient resource utilization**:
 - Better load distribution across all nodes
 - Manager node maintains steady performance at 17%
 
-![alt text](results/cpu_utilization_CUSTOMIZED.png)
+![alt text](result/cpu_utilization_CUSTOMIZED.png)
 
 # Conclusion
 
