@@ -206,6 +206,7 @@ class EC2Manager:
                         SecurityGroupIds=[self.cluster_security_group_id],
                         KeyName=self.key_name,
                         SubnetId=self.subnet['SubnetId'],
+                        Monitoring={'Enabled': True},
                         BlockDeviceMappings=[
                             {
                                 "DeviceName": "/dev/sda1",
@@ -231,6 +232,7 @@ class EC2Manager:
                 SecurityGroupIds=[self.cluster_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
+                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -255,6 +257,7 @@ class EC2Manager:
                 SecurityGroupIds=[self.proxy_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
+                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -279,6 +282,7 @@ class EC2Manager:
                 SecurityGroupIds=[self.trusted_host_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
+                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -303,6 +307,7 @@ class EC2Manager:
                 SecurityGroupIds=[self.gatekeeper_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
+                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
