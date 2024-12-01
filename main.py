@@ -26,7 +26,7 @@ def create_ssh_client(host, user, key_path):
     return ssh
 
 
-class EC2Manager:
+class EC2Class:
     def __init__(self):
         self.key_name = "key_pair_db_cluster"
         
@@ -734,12 +734,11 @@ class EC2Manager:
 
 # Main
 
-# Launch instances
-ec2_manager = EC2Manager()
 
-# Clear data folder
-os.system("rm -rf data")
-os.system("mkdir data")
+ec2_manager = EC2Class()
+
+os.system("rm -rf benchmark_sysbench")
+os.system("mkdir benchmark_sysbench")
 
 ec2_manager.create_key_pair()
 time.sleep(5)
