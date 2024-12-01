@@ -4,6 +4,7 @@ Stephen Cohen - 2412336
 
 ---
 - [Cloud Design Patterns: Implementing a DB Cluster](#cloud-design-patterns-implementing-a-db-cluster)
+- [Launch the infrastructure](#launch-the-infrastructure)
 - [Implementation Architecture and Workflow](#implementation-architecture-and-workflow)
   - [System Components](#system-components)
   - [Request Flow Process](#request-flow-process)
@@ -37,11 +38,22 @@ Stephen Cohen - 2412336
       - [CPU Utilization](#cpu-utilization-2)
 - [Conclusion](#conclusion)
 - [Appendix](#appendix)
+  - [Github](#github)
   - [MySQL Sysbench](#mysql-sysbench)
 ---
 
 This report details the implementation of a MySQL cluster on Amazon EC2 using cloud design patterns, specifically the Proxy and Gatekeeper patterns.
 All the code is available on [Github](https://github.com/Papushkado/DBCluster)
+
+# Launch the infrastructure
+
+```
+git clone https://github.com/Papushkado/DBCluster.git
+
+pip install -r requirements.txt
+
+py main.py
+```
 
 # Implementation Architecture and Workflow
 
@@ -318,9 +330,9 @@ Write requests: {'avg_time': 0.1200225088596344, 'success_rate': 100.0}
 In DIRECT_HIT mode, the manager node shows significantly higher CPU utilization (peaking at 30%) compared to workers (maximum 15%). 
 **This is expected as all requests are routed to the manager node.** The workers show minimal activity, primarily from background processes and data replication.
 
-![alt text](results/cpu_utilization_DIRECT_HIT.png)
+![alt text](../result/cpu_utilization_DIRECT_HIT.png)
 
-### Random Mode 
+### Random Mode
 
 #### Speed
 
@@ -340,7 +352,7 @@ The RANDOM mode demonstrates **more balanced resource utilization**:
 - Load distribution is more even compared to Direct Hit
 - Clear pattern of distributed read operations
 
-![alt text](results/cpu_utilization_RANDOM.png)
+![alt text](../result/cpu_utilization_RANDOM.png)
 
 ### Customized Mode
 
@@ -362,7 +374,7 @@ The CUSTOMIZED mode shows **the most efficient resource utilization**:
 - Better load distribution across all nodes
 - Manager node maintains steady performance at 17%
 
-![alt text](results/cpu_utilization_CUSTOMIZED.png)
+![alt text](../result/cpu_utilization_CUSTOMIZED.png)
 
 # Conclusion
 
@@ -382,6 +394,10 @@ For production environments, the Customized mode would be the recommended choice
 
 
 # Appendix
+
+## Github
+
+All the code is available on [Github](https://github.com/Papushkado/DBCluster)
 
 ## MySQL Sysbench
 

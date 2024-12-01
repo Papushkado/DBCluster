@@ -690,16 +690,20 @@ class EC2Class:
                 InternetGatewayId=self.igw['InternetGatewayId']
             )
             
+            time.sleep(60)
+            
             # Delete route table
             self.ec2_client.delete_route_table(
                 RouteTableId=self.route_table['RouteTableId']
             )
             
+            time.sleep(20)
             # Delete subnet
             self.ec2_client.delete_subnet(
                 SubnetId=self.subnet['SubnetId']
             )
             
+            time.sleep(20)
             # Delete VPC
             self.ec2_client.delete_vpc(VpcId=self.vpc_id)
             

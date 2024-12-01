@@ -1,0 +1,8 @@
+requests
+pandas
+matplotlib
+boto3
+paramiko
+scp
+Flask
+mysql-connector-python
