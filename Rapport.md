@@ -37,7 +37,6 @@ Stephen Cohen - 2412336
       - [CPU Utilization](#cpu-utilization-2)
 - [Conclusion](#conclusion)
 - [Appendix](#appendix)
-  - [Github](#github)
   - [MySQL Sysbench](#mysql-sysbench)
 ---
 
@@ -383,10 +382,6 @@ For production environments, the Customized mode would be the recommended choice
 
 
 # Appendix
-
-## Github
-
-All the code is available on [Github](https://github.com/Papushkado/DBCluster)
 
 ## MySQL Sysbench
 

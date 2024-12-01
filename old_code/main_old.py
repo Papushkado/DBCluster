@@ -26,7 +26,7 @@ def create_ssh_client(host, user, key_path):
     return ssh
 
 
-class EC2Class:
+class EC2Manager:
     def __init__(self):
         self.key_name = "key_pair_db_cluster"
         
@@ -165,26 +165,12 @@ class EC2Class:
         
         self.execute_commands(iptables_commands, [self.trusted_host_instance])
 
-    def get_cpu_utilization(self, instance_id, start_time, end_time):
-        cloudwatch = boto3.client('cloudwatch', region_name='us-east-1')
-        response = cloudwatch.get_metric_statistics(
-            Namespace='AWS/EC2',
-            MetricName='CPUUtilization',
-            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-            StartTime=start_time,
-            EndTime=end_time,
-            Period=60,
-            Statistics=['Average']
-        )
-        return response['Datapoints']
-
     def launch_instances(self):
         """Launch instances in the created subnet"""
         common_args = {
             'SubnetId': self.subnet['SubnetId'],
             'ImageId': self.ami_id,
             'KeyName': self.key_name,
-            'Monitoring': {'Enabled': True},
             'BlockDeviceMappings': [{
                 'DeviceName': '/dev/sda1',
                 'Ebs': {
@@ -206,7 +192,6 @@ class EC2Class:
                         SecurityGroupIds=[self.cluster_security_group_id],
                         KeyName=self.key_name,
                         SubnetId=self.subnet['SubnetId'],
-                        Monitoring={'Enabled': True},
                         BlockDeviceMappings=[
                             {
                                 "DeviceName": "/dev/sda1",
@@ -232,7 +217,6 @@ class EC2Class:
                 SecurityGroupIds=[self.cluster_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
-                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -257,7 +241,6 @@ class EC2Class:
                 SecurityGroupIds=[self.proxy_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
-                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -282,7 +265,6 @@ class EC2Class:
                 SecurityGroupIds=[self.trusted_host_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
-                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -307,7 +289,6 @@ class EC2Class:
                 SecurityGroupIds=[self.gatekeeper_security_group_id],
                 KeyName=self.key_name,
                 SubnetId=self.subnet['SubnetId'],
-                Monitoring={'Enabled': True},
                 BlockDeviceMappings=[
                     {
                         "DeviceName": "/dev/sda1",
@@ -469,42 +450,57 @@ class EC2Class:
 
     def install_cluster_dependencies(self) -> None:
         commands = [
-        "sudo apt-get update",
-        "sudo apt-get install -y mysql-server wget sysbench python3-pip",
-        "sudo pip3 install flask mysql-connector-python requests",
-        "sudo sed -i 's/bind-address.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf",
-        'sudo mysql -e \'ALTER USER "root"@"localhost" IDENTIFIED WITH mysql_native_password BY "root_password";\'',
-        "sudo systemctl restart mysql",
-        "sudo systemctl enable mysql",
-        'sudo mysql -u root -p"root_password" -e \'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY "root_password";\'',
-        'sudo mysql -u root -p"root_password" -e "GRANT ALL PRIVILEGES ON *.* TO \'root\'@\'%\';"',
-        'sudo mysql -u root -p"root_password" -e "FLUSH PRIVILEGES;"',
-        "wget https://downloads.mysql.com/docs/sakila-db.tar.gz",
-        "tar -xzvf sakila-db.tar.gz",
-        'sudo mysql -u root -p"root_password" -e "CREATE DATABASE IF NOT EXISTS sakila;"',
-        'sudo mysql -u root -p"root_password" sakila -e "source sakila-db/sakila-schema.sql"',
-        'sudo mysql -u root -p"root_password" sakila -e "source sakila-db/sakila-data.sql"',
-        'sudo mysql -u root -p"root_password" -e "SHOW DATABASES;"',
-        'sudo mysql -u root -p"root_password" -e "USE sakila; SHOW TABLES;"',
-        'echo "MYSQL_USER=root" | sudo tee -a /etc/environment',
-        'echo "MYSQL_PASSWORD=root_password" | sudo tee -a /etc/environment',
-        'echo "MYSQL_DB=sakila" | sudo tee -a /etc/environment',
-        'echo "MYSQL_HOST=localhost" | sudo tee -a /etc/environment',
-        "source /etc/environment",
+            # Update and Install MySQL, sysbench, and Flask
+            "sudo apt-get update",
+            "sudo apt-get install -y mysql-server wget sysbench python3-pip",
+            "sudo pip3 install flask mysql-connector-python requests",
+            # Set MySQL root password
+            'sudo mysql -e \'ALTER USER "root"@"localhost" IDENTIFIED WITH mysql_native_password BY "root_password";\'',
+            # Start and enable MySQL
+            "sudo systemctl start mysql",
+            "sudo systemctl enable mysql",
+            # Download and extract Sakila database
+            "wget https://downloads.mysql.com/docs/sakila-db.tar.gz",
+            "tar -xzvf sakila-db.tar.gz",
+            # Import Sakila schema and data into MySQL
+            "sudo mysql -u root -p'root_password' -e 'SOURCE sakila-db/sakila-schema.sql;'",
+            "sudo mysql -u root -p'root_password' -e 'SOURCE sakila-db/sakila-data.sql;'",
+            # Verify that the Sakila database has been installed correctly
+            "sudo mysql -u root -p'root_password' -e 'SHOW DATABASES;'",
+            "sudo mysql -u root -p'root_password' -e 'USE sakila; SHOW TABLES;'",
+            # Add global environment variables to /etc/environment
+            'echo "MYSQL_USER=root" | sudo tee -a /etc/environment',
+            'echo "MYSQL_PASSWORD=root_password" | sudo tee -a /etc/environment',
+            'echo "MYSQL_DB=sakila" | sudo tee -a /etc/environment',
+            'echo "MYSQL_HOST=localhost" | sudo tee -a /etc/environment',
+            "source /etc/environment",
         ]
 
-        self.execute_commands(commands, [self.manager_instance] + self.worker_instances, print_output=False)
+        # Execute commands
+        self.execute_commands(
+            commands,
+            [self.manager_instance] + self.worker_instances,
+            print_output=False,
+        )
 
     def install_network_instances_dependencies(self) -> None:
         commands = [
+            # Update and Install Python3 and flask
             "sudo apt-get update",
             "sudo apt-get install -y python3-pip",
             "sudo pip3 install flask requests",
         ]
 
-        # Liste des instances au lieu de les additionner
-        network_instances = [self.proxy_instance, self.trusted_host_instance, self.gatekeeper_instance]
-        self.execute_commands(commands, network_instances, print_output=False)
+        # Execute commands
+        self.execute_commands(
+            commands,
+            [
+                self.proxy_instance
+                + self.trusted_host_instance
+                + self.gatekeeper_instance
+            ],
+            print_output=False,
+        )
 
     def run_sys_bench(self) -> None:
         sysbench_commands = [
@@ -530,10 +526,10 @@ class EC2Class:
                 scp = SCPClient(ssh_client.get_transport())
                 scp.get(
                     "sysbench_results.txt",
-                    f"benchmark_sysbench/sysbench_results_{ec2_instance.get_name()}.txt",
+                    f"data/sysbench_results_{ec2_instance.get_name()}.txt",
                 )
                 print(
-                    f"Sysbench results downloaded to benchmark_sysbench/sysbench_results_{ec2_instance.get_name()}.txt"
+                    f"Sysbench results downloaded to data/sysbench_results_{ec2_instance.get_name()}.txt"
                 )
 
         except Exception as e:
@@ -552,7 +548,7 @@ class EC2Class:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("utils/manager.py", "manager.py")
+            scp.put("scripts/manager_script.py", "manager_script.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -569,7 +565,7 @@ class EC2Class:
                     worker.instance.public_ip_address, "ubuntu", self.ssh_key_path
                 )
                 scp = SCPClient(ssh_client.get_transport())
-                scp.put("utils/worker.py", "worker.py")
+                scp.put("scripts/worker_script.py", "worker_script.py")
             except Exception as e:
                 print(
                     f"Error uploading and starting worker script on {worker.get_name()}: {e}"
@@ -586,7 +582,7 @@ class EC2Class:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("utils/proxy.py", "proxy.py")
+            scp.put("scripts/proxy_script.py", "proxy_script.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -604,7 +600,7 @@ class EC2Class:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("utils/trusted_host.py", "trusted_host.py")
+            scp.put("scripts/trusted_host_script.py", "trusted_host_script.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -622,7 +618,7 @@ class EC2Class:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("utils/gatekeeper.py", "gatekeeper.py")
+            scp.put("scripts/gatekeeper_script.py", "gatekeeper_script.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -635,34 +631,34 @@ class EC2Class:
     def start_db_cluster_apps(self):
         # Start the Flask app on the manager instance
         commands = [
-            "nohup python3 manager.py > manager_output.log 2>&1 &",
+            "nohup python3 manager_script.py > manager_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.manager_instance])
 
         # Start the Flask app on the worker instances
         commands = [
-            "nohup python3 worker.py > worker_output.log 2>&1 &",
+            "nohup python3 worker_script.py > worker_output.log 2>&1 &",
         ]
         self.execute_commands(commands, self.worker_instances)
 
     def start_proxy_app(self) -> None:
         # Start the Flask app on the proxy instance
         commands = [
-            "nohup python3 proxy.py > proxy_output.log 2>&1 &",
+            "nohup python3 proxy_script.py > proxy_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.proxy_instance])
 
     def start_trusted_host_app(self) -> None:
         # Start the Flask app on the trusted host instance
         commands = [
-            "nohup python3 trusted_host.py > trusted_host_output.log 2>&1 &",
+            "nohup python3 trusted_host_script.py > trusted_host_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.trusted_host_instance])
 
     def start_gatekeeper_app(self) -> None:
         # Start the Flask app on the gatekeeper instance
         commands = [
-            "nohup python3 gatekeeper.py > gatekeeper_output.log 2>&1 &",
+            "nohup python3 gatekeeper_script.py > gatekeeper_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.gatekeeper_instance])
 
@@ -734,11 +730,12 @@ class EC2Class:
 
 # Main
 
+# Launch instances
+ec2_manager = EC2Manager()
 
-ec2_manager = EC2Class()
-
-os.system("rm -rf benchmark_sysbench")
-os.system("mkdir benchmark_sysbench")
+# Clear data folder
+os.system("rm -rf data")
+os.system("mkdir data")
 
 ec2_manager.create_key_pair()
 time.sleep(5)
@@ -757,25 +754,12 @@ time.sleep(10)
 ec2_manager.add_inbound_rules()
 
 # Save manager and worker ips to a JSON file
-instance_data_ip = {}
+instance_data = {}
 for ec2_instance in all_instances:
-    instance_data_ip[ec2_instance.name] = ec2_instance.instance.public_ip_address
-sql_instances = []
-sql_instances.append(ec2_manager.manager_instance)
-sql_instances.extend(ec2_manager.worker_instances)
-
-instance_data = {
-    instance.name: {
-        "instance_id": instance.instance.id
-    }
-    for instance in sql_instances
-}
-
-with open("instance_info.json", "w") as f:
-    json.dump(instance_data, f, indent=4)
+    instance_data[ec2_instance.name] = ec2_instance.instance.public_ip_address
 
 with open("public_ips.json", "w") as file:
-    json.dump(instance_data_ip, file, indent=4)
+    json.dump(instance_data, file, indent=4)
 
 print("Installing cluster dependencies...")
 ec2_manager.install_cluster_dependencies()
@@ -804,20 +788,9 @@ ec2_manager.start_trusted_host_app()
 print("Starting Flask app for the gatekeeper...")
 ec2_manager.start_gatekeeper_app()
 
-# Benchmark
-print("\nStarting benchmark tests...")
-try:
-    print("Running benchmark.py...")
-    os.system("python benchmark.py")
-    print("Benchmark completed successfully.")
-except Exception as e:
-    print(f"Error during benchmark: {e}")
-
-print("\nBenchmark completed. Starting cleanup...")
-time.sleep(30)  
-
-
 # Cleanup
-
+'''
+press_touched = input("Press any key to terminate and cleanup: ")
 ec2_manager.cleanup(all_instances)
 print("Cleanup complete.")
+'''
