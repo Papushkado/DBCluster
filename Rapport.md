@@ -3,18 +3,382 @@
 Stephen Cohen - 2412336
 
 ---
-
-
+- [Cloud Design Patterns: Implementing a DB Cluster](#cloud-design-patterns-implementing-a-db-cluster)
+- [Implementation Architecture and Workflow](#implementation-architecture-and-workflow)
+  - [System Components](#system-components)
+  - [Request Flow Process](#request-flow-process)
+  - [Data Management](#data-management)
+  - [Security Implementation](#security-implementation)
+  - [Deployment and Management](#deployment-and-management)
+- [Implementing the infrastructure](#implementing-the-infrastructure)
+  - [Architecture](#architecture)
+    - [VPC](#vpc)
+  - [Security group](#security-group)
+    - [Inbound Rules](#inbound-rules)
+    - [Trusted Host](#trusted-host)
+- [MySQL instances](#mysql-instances)
+- [Proxy Patter Implementation](#proxy-patter-implementation)
+    - [Direct Hit Mode](#direct-hit-mode)
+    - [Random Mode](#random-mode)
+    - [Customized Mode](#customized-mode)
+- [Gatekeeper Pattern Implementation](#gatekeeper-pattern-implementation)
+    - [Security Chain Implementation](#security-chain-implementation)
+- [Benchmarking Analysis and Results](#benchmarking-analysis-and-results)
+  - [Benchmark Methodology](#benchmark-methodology)
+  - [Performance Analysis by mode](#performance-analysis-by-mode)
+    - [Direct Hit Mode](#direct-hit-mode-1)
+      - [Speed](#speed)
+      - [CPU utilization](#cpu-utilization)
+    - [Random Mode](#random-mode-1)
+      - [Speed](#speed-1)
+      - [CPU Utilization](#cpu-utilization-1)
+    - [Customized Mode](#customized-mode-1)
+      - [Speed](#speed-2)
+      - [CPU Utilization](#cpu-utilization-2)
+- [Conclusion](#conclusion)
+- [Appendix](#appendix)
+  - [MySQL Sysbench](#mysql-sysbench)
 ---
+
+This report details the implementation of a MySQL cluster on Amazon EC2 using cloud design patterns, specifically the Proxy and Gatekeeper patterns.
+All the code is available on [Github](https://github.com/Papushkado/DBCluster)
+
+# Implementation Architecture and Workflow
+
+## System Components
+
+The implementation consists of a MySQL cluster managed through a secure gateway chain. The architecture includes three MySQL instances (one manager, two workers), a proxy server for load balancing, and a dual-component security gateway (Gatekeeper and Trusted Host).
+
+## Request Flow Process
+
+1. External requests enter through the Gatekeeper instance
+2. The Gatekeeper validates and forwards requests to the Trusted Host
+3. The Trusted Host verifies security and communicates with the Proxy
+4. The Proxy implements three routing strategies:
+
+   - Direct Hit: Routes all requests to the manager
+   - Random: Distributes read requests randomly among workers
+   - Customized: Routes based on server response times
+
+## Data Management 
+
+Write operations are exclusively handled by the manager node, which replicates data to worker nodes. Read operations can be distributed across workers depending on the selected proxy mode, enhancing performance through load distribution.
+
+## Security Implementation
+
+The system employs multiple security layers through:
+
+- VPC isolation with specific security groups
+- Gatekeeper pattern for request filtering
+- IPtables rules on the Trusted Host
+- Restricted communication paths between components
+
+## Deployment and Management
+
+Infrastructure deployment is fully automated using AWS SDK (boto3), handling VPC creation, instance deployment, security configuration, and application setup. The system includes monitoring capabilities through CloudWatch and comprehensive benchmarking functionality.
+
 
 # Implementing the infrastructure
 
 To set all, this infrastructure, you juste have to launch `main.py`
 
-## MySQL instances 
+## Architecture
+
+### VPC 
+
+A dedicated VPC is created with proper networking:
+
+```
+vpc = self.ec2_client.create_vpc(
+    CidrBlock='10.0.0.0/16',
+    TagSpecifications=[{
+        'ResourceType': 'vpc',
+        'Tags': [{'Key': 'Name', 'Value': 'cluster-vpc'}]
+    }]
+)['Vpc']
+```
+
+## Security group
+
+Each instance type has its own security group with specific inbound rules:
+
+```
+def _create_security_groups(self):
+    timestamp = str(int(time.time()))
+    
+    # Security Group for MySQL Cluster (Manager and Workers)
+    self.cluster_security_group_id = self.ec2_client.create_security_group(
+        GroupName=f"common_sg_{timestamp}",
+        Description="Security group for manager and workers",
+        VpcId=self.vpc_id
+    )['GroupId']
+    
+    # Security Group for Proxy
+    self.proxy_security_group_id = self.ec2_client.create_security_group(
+        GroupName=f"proxy_sg_{timestamp}",
+        Description="Proxy security group",
+        VpcId=self.vpc_id
+    )['GroupId']
+    
+    # Security Group for Trusted Host
+    self.trusted_host_security_group_id = self.ec2_client.create_security_group(
+        GroupName=f"trusted_host_sg_{timestamp}",
+        Description="Trusted host security group",
+        VpcId=self.vpc_id
+    )['GroupId']
+    
+    # Security Group for Gatekeeper
+    self.gatekeeper_security_group_id = self.ec2_client.create_security_group(
+        GroupName=f"gatekeeper_sg_{timestamp}",
+        Description="Gatekeeper security group",
+        VpcId=self.vpc_id
+    )['GroupId']
+```
+
+### Inbound Rules 
+
+Each security group has specific inbound rules defining allowed traffic:
+
+```
+def add_inbound_rules(self):
+    # Rules for MySQL Cluster (Manager and Workers)
+    self.ec2_client.authorize_security_group_ingress(
+        GroupId=self.cluster_security_group_id,
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],  # SSH access
+            },
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 5000,
+                "ToPort": 5000,
+                "IpRanges": [
+                    {"CidrIp": f"{self.manager_instance.instance.public_ip_address}/32"},
+                    {"CidrIp": f"{self.proxy_instance.instance.public_ip_address}/32"}
+                ],
+            },
+        ],
+    )
+
+    # Rules for Trusted Host
+    self.ec2_client.authorize_security_group_ingress(
+        GroupId=self.trusted_host_security_group_id,
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+            },
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 5000,
+                "ToPort": 5000,
+                "IpRanges": [{"CidrIp": f"{self.gatekeeper_instance.instance.public_ip_address}/32"}],
+            },
+        ],
+    )
+```
+
+### Trusted Host 
+
+The Trusted Host has additional IPtables rules for enhanced security:
+
+- DROP all traffic by default
+- Allow SSH only from Gatekeeper
+- Allow application port within VPC (to convey queries)
+
+```
+def install_network_security(self):
+    iptables_commands = [
+        # Reset all rules
+        "sudo iptables -F",
+        # Default policies: DROP all traffic
+        "sudo iptables -P INPUT DROP",
+        "sudo iptables -P FORWARD DROP",
+        "sudo iptables -P OUTPUT DROP",
+        # Allow established connections
+        "sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT",
+        "sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT",
+        # Allow SSH only from Gatekeeper
+        f"sudo iptables -A INPUT -p tcp --dport 22 -s {self.gatekeeper_instance.instance.private_ip_address} -j ACCEPT",
+        # Allow application port within VPC
+        "sudo iptables -A INPUT -p tcp --dport 5000 -s 10.0.0.0/16 -j ACCEPT",
+    ]
+    
+    self.execute_commands(iptables_commands, [self.trusted_host_instance])
+```
+
+
+# MySQL instances 
 
 The results of the `Sysbench` benchmark on the MySQL instances is available in the appendix. (This the logs that we get)
 To experimente this, you can run the code and then see the results in the "data" folder. 
+
+
+# Proxy Patter Implementation
+
+The proxy pattern is implemented with three distinct modes as required:
+All of the code is available in [proxy.py](./utils/proxy.py)
+
+### Direct Hit Mode
+
+```
+if mode == "DIRECT_HIT":
+    url = f"http://{public_ips['manager']}:5000/query"
+    response = requests.post(url, json={"query": query})
+    response_data = {}
+    response_data["handled_by"] = "manager"
+    response_data["result"] = response.json()
+    return jsonify(response_data), response.status_code
+```
+
+### Random Mode
+
+```
+elif mode == "RANDOM":
+    target = random.choice(list(public_ips))
+    ip = public_ips[target]
+    url = f"http://{ip}:5000/query"
+    response = requests.post(url, json={"query": query})
+    response_data = {}
+    response_data["handled_by"] = target
+    response_data["result"] = response.json()
+    return jsonify(response_data), response.status_code
+```
+
+In random mode:
+
+- READ requests are randomly distributed among workers
+- Write operations still go to the manager
+- Provides basic load balancing
+
+### Customized Mode 
+
+```
+elif mode == "CUSTOMIZED":
+    ping = {}
+    for key, ip in public_ips.items():
+        if key.startswith("proxy"):
+            continue
+        try:
+            start_time = time.time()
+            requests.get(f"http://{ip}:5000/", timeout=2)
+            ping[key] = time.time() - start_time
+        except requests.exceptions.RequestException:
+            ping[key] = float("inf")
+```
+
+# Gatekeeper Pattern Implementation 
+
+All the code is available in the [gatekeeper script](./utils/gatekeeper.py)
+
+### Security Chain Implementation 
+
+```
+@app.route("/query", methods=["POST"])
+def query():
+    try:
+        data = request.json
+        query = data.get("query")
+
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
+
+        url = f"http://{trusted_host_ip}:5000/query"
+        response = requests.post(url, json={"query": query})
+        return jsonify(response.json()), response.status_code
+```
+---
+# Benchmarking Analysis and Results
+
+## Benchmark Methodology
+
+The benchmarking process was implemented using a comprehensive approach that tests each proxy mode (DIRECT_HIT, RANDOM, and CUSTOMIZED) with 1000 read and write requests. CPU utilization was monitored through CloudWatch metrics, capturing data points every 20 seconds to provide detailed performance insights.
+
+All the code is available in the [benchmark code](./benchmark.py)
+
+## Performance Analysis by mode
+
+### Direct Hit Mode
+
+#### Speed
+
+Here are the results of the benchmark : 
+
+```
+Read requests: {'avg_time': 0.07581605505943298, 'success_rate': 100.0}
+Write requests: {'avg_time': 0.1200225088596344, 'success_rate': 100.0}
+```
+#### CPU utilization 
+
+In DIRECT_HIT mode, the manager node shows significantly higher CPU utilization (peaking at 30%) compared to workers (maximum 15%). 
+**This is expected as all requests are routed to the manager node.** The workers show minimal activity, primarily from background processes and data replication.
+
+![alt text](results/cpu_utilization_DIRECT_HIT.png)
+
+### Random Mode 
+
+#### Speed
+
+Here are the results of the benchmark : 
+
+```
+Read requests: {'avg_time': 0.08405190014839173, 'success_rate': 100.0}
+Write requests: {'avg_time': 0.1335366222858429, 'success_rate': 100.0}
+```
+
+#### CPU Utilization
+
+The RANDOM mode demonstrates **more balanced resource utilization**:
+
+- Manager node peaks at 25%
+- Workers show consistent activity around 20%
+- Load distribution is more even compared to Direct Hit
+- Clear pattern of distributed read operations
+
+![alt text](results/cpu_utilization_RANDOM.png)
+
+### Customized Mode
+
+#### Speed
+
+Here are the results of the benchmark : 
+
+```
+Read requests: {'avg_time': 0.09927887964248658, 'success_rate': 100.0}
+Write requests: {'avg_time': 0.12237462043762207, 'success_rate': 100.0}
+```
+
+#### CPU Utilization
+
+The CUSTOMIZED mode shows **the most efficient resource utilization**:
+
+- Lower peak CPU usage (maximum 19% for worker2)
+- More stable performance curves
+- Better load distribution across all nodes
+- Manager node maintains steady performance at 17%
+
+![alt text](results/cpu_utilization_CUSTOMIZED.png)
+
+# Conclusion
+
+Based on the analysis of the three proxy modes (Direct Hit, Random, and Customized), we can draw several important conclusions about their performance and efficiency:
+- _The Direct Hit mode_ demonstrated the fastest average response times for read operations (0.075s) but created a noticeable bottleneck at the manager node, with CPU utilization reaching 30%. While this approach is simple to implement, it doesn't effectively utilize the cluster's distributed capabilities.
+- The _Random mode_ showed a more balanced workload distribution across nodes, with CPU utilization more evenly spread (around 20-25% across nodes). However, it resulted in slightly slower response times (0.084s for reads), likely due to the overhead of random distribution.
+- The _Customized mode_, while having the slowest average read times (0.099s), achieved the most efficient and stable resource utilization pattern. It maintained CPU usage below 19% across all nodes and showed the most consistent performance curves, indicating better long-term stability and scalability potential.
+
+All three modes maintained 100% success rates for both read and write operations, demonstrating the robustness of the implementation. However, the results suggest different optimal use cases:
+
+- _Direct Hit mode_ is suitable for scenarios **prioritizing raw speed over resource efficiency**
+- _Random mode_ offers a **good balance between performance and resource distribution**
+- _Customized mode_ is ideal for scenarios requiring **stable, predictable performance and optimal resource utilization**
+
+For production environments, the Customized mode would be the recommended choice despite its slightly slower response times, as it provides the best balance of resource utilization, system stability, and scalability potential.
+
 
 
 # Appendix

@@ -530,10 +530,10 @@ class EC2Class:
                 scp = SCPClient(ssh_client.get_transport())
                 scp.get(
                     "sysbench_results.txt",
-                    f"data/sysbench_results_{ec2_instance.get_name()}.txt",
+                    f"benchmark_sysbench/sysbench_results_{ec2_instance.get_name()}.txt",
                 )
                 print(
-                    f"Sysbench results downloaded to data/sysbench_results_{ec2_instance.get_name()}.txt"
+                    f"Sysbench results downloaded to benchmark_sysbench/sysbench_results_{ec2_instance.get_name()}.txt"
                 )
 
         except Exception as e:
@@ -804,9 +804,20 @@ ec2_manager.start_trusted_host_app()
 print("Starting Flask app for the gatekeeper...")
 ec2_manager.start_gatekeeper_app()
 
+# Benchmark
+print("\nStarting benchmark tests...")
+try:
+    print("Running benchmark.py...")
+    os.system("python benchmark.py")
+    print("Benchmark completed successfully.")
+except Exception as e:
+    print(f"Error during benchmark: {e}")
+
+print("\nBenchmark completed. Starting cleanup...")
+time.sleep(30)  
+
+
 # Cleanup
-'''
-press_touched = input("Press any key to terminate and cleanup: ")
+
 ec2_manager.cleanup(all_instances)
 print("Cleanup complete.")
-'''

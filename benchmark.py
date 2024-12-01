@@ -39,49 +39,42 @@ def get_cpu_utilization(instance_id, start_time, end_time):
   )
   return response['Datapoints']
 
-def run_benchmark(gatekeeper_ip, num_requests=100, mode=""):
-    url = f"http://{gatekeeper_ip}:5000/query"
-    
-    read_query = "SELECT * FROM actor LIMIT 1;"
-    write_query = "INSERT INTO actor (first_name, last_name) VALUES ('Test', 'User');"
-    
-    results = []
-    time.sleep(1)
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        read_futures = [
-            executor.submit(send_request, url, read_query, False)
-            for _ in range(num_requests)
-        ]
-        
-        write_futures = [
-            executor.submit(send_request, url, write_query, True)
-            for _ in range(num_requests)
-        ]
-        
-        for future in concurrent.futures.as_completed(read_futures + write_futures):
-            results.append(future.result())
-    
-    df = pd.DataFrame(results)
-    
-    analysis = {
-        "read": {
-            "avg_time": df[df["type"] == "read"]["time"].mean(),
-            "success_rate": (df[df["type"] == "read"]["success"].sum() / num_requests) * 100,
-            "requests": [r for r in results if r["type"] == "read"]
-        },
-        "write": {
-            "avg_time": df[df["type"] == "write"]["time"].mean(),
-            "success_rate": (df[df["type"] == "write"]["success"].sum() / num_requests) * 100,
-            "requests": [r for r in results if r["type"] == "write"]
+def run_benchmark(gatekeeper_ip, num_requests=100):
+   url = f"http://{gatekeeper_ip}:5000/query"
+   
+   read_query = "SELECT * FROM actor LIMIT 1;"
+   write_query = "INSERT INTO actor (first_name, last_name) VALUES ('Test', 'User');"
+   
+   results = []
+   time.sleep(1) #temps d'attente entre les tests
+   
+   with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+       read_futures = [
+           executor.submit(send_request, url, read_query, False)
+           for _ in range(num_requests)
+       ]
+       
+       write_futures = [
+           executor.submit(send_request, url, write_query, True)
+           for _ in range(num_requests)
+       ]
+       
+       for future in concurrent.futures.as_completed(read_futures + write_futures):
+           results.append(future.result())
+   
+   df = pd.DataFrame(results)
+   
+   analysis = {
+       "read": {
+           "avg_time": df[df["type"] == "read"]["time"].mean(),
+           "success_rate": (df[df["type"] == "read"]["success"].sum() / num_requests) * 100
+       },
+       "write": {
+           "avg_time": df[df["type"] == "write"]["time"].mean(),
+           "success_rate": (df[df["type"] == "write"]["success"].sum() / num_requests) * 100
         }
     }
-
-    # Enregistrer les résultats détaillés dans un fichier JSON
-    with open(f'sql_responses_{mode}.json', 'w') as f:
-        json.dump(analysis, f, indent=4)
-    
-    return analysis
+   return analysis
 
 def run_benchmark_with_monitoring(gatekeeper_ip, instances, mode):
     plt.switch_backend('Agg')
@@ -91,7 +84,7 @@ def run_benchmark_with_monitoring(gatekeeper_ip, instances, mode):
     time.sleep(60)  
     
     # Exécuter le benchmark avec plus de requêtes
-    results = run_benchmark(gatekeeper_ip, num_requests=1000, mode=mode)
+    results = run_benchmark(gatekeeper_ip, num_requests=1000)
     time.sleep(180)  # attendre pour cloudwatch
     
     end_time = datetime.datetime.utcnow()
