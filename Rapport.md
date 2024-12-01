@@ -9,10 +9,12 @@ Stephen Cohen - 2412336
 
 # Implementing the infrastructure
 
+To set all, this infrastructure, you juste have to launch `main.py`
+
 ## MySQL instances 
 
 The results of the `Sysbench` benchmark on the MySQL instances is available in the appendix. (This the logs that we get)
-To experimente this, you can run the code named `deployment_with_benchmark.py`
+To experimente this, you can run the code and then see the results in the "data" folder. 
 
 
 # Appendix

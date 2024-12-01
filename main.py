@@ -552,7 +552,7 @@ class EC2Manager:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("scripts/manager_script.py", "manager_script.py")
+            scp.put("utils/manager.py", "manager.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -569,7 +569,7 @@ class EC2Manager:
                     worker.instance.public_ip_address, "ubuntu", self.ssh_key_path
                 )
                 scp = SCPClient(ssh_client.get_transport())
-                scp.put("scripts/worker_script.py", "worker_script.py")
+                scp.put("utils/worker.py", "worker.py")
             except Exception as e:
                 print(
                     f"Error uploading and starting worker script on {worker.get_name()}: {e}"
@@ -586,7 +586,7 @@ class EC2Manager:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("scripts/proxy_script.py", "proxy_script.py")
+            scp.put("utils/proxy.py", "proxy.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -604,7 +604,7 @@ class EC2Manager:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("scripts/trusted_host_script.py", "trusted_host_script.py")
+            scp.put("utils/trusted_host.py", "trusted_host.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -622,7 +622,7 @@ class EC2Manager:
                 self.ssh_key_path,
             )
             scp = SCPClient(ssh_client.get_transport())
-            scp.put("scripts/gatekeeper_script.py", "gatekeeper_script.py")
+            scp.put("utils/gatekeeper.py", "gatekeeper.py")
             scp.put("public_ips.json", "public_ips.json")
 
         except Exception as e:
@@ -635,34 +635,34 @@ class EC2Manager:
     def start_db_cluster_apps(self):
         # Start the Flask app on the manager instance
         commands = [
-            "nohup python3 manager_script.py > manager_output.log 2>&1 &",
+            "nohup python3 manager.py > manager_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.manager_instance])
 
         # Start the Flask app on the worker instances
         commands = [
-            "nohup python3 worker_script.py > worker_output.log 2>&1 &",
+            "nohup python3 worker.py > worker_output.log 2>&1 &",
         ]
         self.execute_commands(commands, self.worker_instances)
 
     def start_proxy_app(self) -> None:
         # Start the Flask app on the proxy instance
         commands = [
-            "nohup python3 proxy_script.py > proxy_output.log 2>&1 &",
+            "nohup python3 proxy.py > proxy_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.proxy_instance])
 
     def start_trusted_host_app(self) -> None:
         # Start the Flask app on the trusted host instance
         commands = [
-            "nohup python3 trusted_host_script.py > trusted_host_output.log 2>&1 &",
+            "nohup python3 trusted_host.py > trusted_host_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.trusted_host_instance])
 
     def start_gatekeeper_app(self) -> None:
         # Start the Flask app on the gatekeeper instance
         commands = [
-            "nohup python3 gatekeeper_script.py > gatekeeper_output.log 2>&1 &",
+            "nohup python3 gatekeeper.py > gatekeeper_output.log 2>&1 &",
         ]
         self.execute_commands(commands, [self.gatekeeper_instance])
 
